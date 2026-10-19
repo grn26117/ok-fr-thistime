@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Combat Game - 3D Gladiator Arena</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Canva Data SDK Mock / Persistent Storage Integration -->
+  <script>
+    window.canvaSDK = {
+      saveScore: async (score, gold) => {
+        try {
+          localStorage.setItem('combat_game_highscore', score);
+          localStorage.setItem('combat_game_gold', gold);
+        } catch(e) {}
+      },
+      getScore: async () => {
+        return {
+          highScore: parseInt(localStorage.getItem('combat_game_highscore') || '0', 10),
+          gold: parseInt(localStorage.getItem('combat_game_gold') || '0', 10)
+        };
+      }
+    };
+  </script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: 'Inter', sans-serif;
+      background-color: #1a1a24;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    .hud-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-sizing: border-box;
+      padding: 20px;
+    }
+    .stat-bar {
+      width: 240px;
+      height: 16px;
+      background: rgba(15, 15, 25, 0.85);
+      border: 2px solid #52525b;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .stat-fill {
+      height: 100%;
+      width: 100%;
+      transition: width 0.15s ease-out;
+    }
+    .hp-fill { background: linear-gradient(90deg, #dc2626, #ef4444); }
+    .stamina-fill { background: linear-gradient(90deg, #d97706, #fbbf24); }
+    
+    .floating-text {
+      position: absolute;
+      font-weight: 900;
+      font-size: 1.4rem;
+      pointer-events: none;
+      animation: floatUp 1.2s forwards ease-out;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+    }
+    @keyframes floatUp {
+      0% { opacity: 1; transform: translateY(0) scale(1); }
+      50% { opacity: 1; transform: translateY(-35px) scale(1.25); }
+      100% { opacity: 0; transform: translateY(-70px) scale(0.8); }
+    }
+
+    .parry-flash {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(59,130,246,0) 70%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.12s ease-out;
+    }
+    .touch-btn {
+      pointer-events: auto;
+      background: rgba(0,0,0,0.65);
+      border: 2px solid rgba(255,255,255,0.3);
+      color: white;
+      font-weight: bold;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+    }
+    .touch-btn:active {
+      background: rgba(245,158,11,0.7);
+      border-color: #fbbf24;
+    }
+    .zone-indicator {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(251,191,36,0.5);
+      padding: 8px 22px;
+      border-radius: 24px;
+      color: #fef08a;
+      font-weight: 800;
+      font-size: 0.95rem;
+      letter-spacing: 1.5px;
+      pointer-events: none;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    }
+    .crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 10px;
+      height: 10px;
+      border: 2px solid rgba(255, 255, 255, 0.6);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .parry-status-tag {
+      position: absolute;
+      bottom: 110px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-weight: 900;
+      font-size: 1.1rem;
+      letter-spacing: 2px;
+      padding: 4px 16px;
+      border-radius: 12px;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+    }
+  </style>
+</head>
+<body class="select-none">
+
+  <div id="canvas-container"></div>
+  <div id="parry-flash" class="parry-flash"></div>
+  <div class="crosshair"></div>
+  <div id="zone-tag" class="zone-indicator">🏛️ SUNLIT COLISEUM ARENA</div>
+  <div id="parry-status" class="parry-status-tag bg-zinc-900/80 text-amber-300 border border-amber-500/50 opacity-0">BLOCKING</div>
+
+  <!-- HUD Overlay -->
+  <div class="hud-overlay">
+    <!-- Top Stats -->
+    <div class="flex justify-between items-start w-full pointer-events-auto">
+      <div class="space-y-2.5">
+        <!-- Health Bar -->
+        <div>
+          <div class="flex justify-between text-xs text-amber-100 font-extrabold mb-1 tracking-wider uppercase drop-shadow">
+            <span>Gladiator Health</span>
+            <span id="hp-text">100 / 100</span>
+          </div>
+          <div class="stat-bar"><div id="hp-bar" class="stat-fill hp-fill"></div></div>
+        </div>
+        <!-- Stamina Bar -->
+        <div>
+          <div class="flex justify-between text-xs text-amber-100 font-extrabold mb-1 tracking-wider uppercase drop-shadow">
+            <span>Stamina</span>
+            <span id="stamina-text">100 / 100</span>
+          </div>
+          <div class="stat-bar"><div id="stamina-bar" class="stat-fill stamina-fill"></div></div>
+        </div>
+      </div>
+
+      <!-- Wave & Gold Display -->
+      <div class="flex gap-3">
+        <button id="shop-btn" onclick="toggleShopModal(true)" class="bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-black font-black px-4 py-2.5 rounded-xl shadow-lg border border-yellow-200 flex items-center gap-2 transition transform active:scale-95">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+          MARKET STALL
+        </button>
+        <div class="bg-zinc-900/90 backdrop-blur border border-amber-500/40 px-5 py-2.5 rounded-xl text-right shadow-2xl">
+          <div class="text-amber-400 text-xs font-bold uppercase tracking-widest">Coliseum Gold</div>
+          <div class="text-2xl font-extrabold text-amber-300 flex items-center justify-end gap-1">
+            <span id="gold-val">0</span> <span class="text-xs text-yellow-400">🪙</span>
+          </div>
+          <div class="text-xs text-gray-300 mt-0.5">Victories: <span id="wave-val" class="text-white font-bold">1</span> | High Score: <span id="highscore-val" class="text-gray-200">0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Notification Toast -->
+    <div id="center-toast" class="self-center text-center text-3xl font-black text-yellow-300 tracking-widest opacity-0 transition-opacity duration-300 drop-shadow-2xl bg-black/60 px-8 py-3 rounded-2xl border border-yellow-500/30">
+      1v1 GLADIATOR DUEL!
+    </div>
+
+    <!-- Mobile / Touch Controls Overlay -->
+    <div class="flex md:hidden justify-between items-end w-full pb-4 pointer-events-auto">
+      <!-- Movement D-Pad -->
+      <div class="grid grid-cols-3 gap-2 w-36 h-36">
+        <div></div>
+        <button class="touch-btn text-xl" ontouchstart="keys.w=true" ontouchend="keys.w=false">▲</button>
+        <div></div>
+        <button class="touch-btn text-xl" ontouchstart="keys.a=true" ontouchend="keys.a=false">◀</button>
+        <button class="touch-btn text-xs font-black" ontouchstart="triggerDodge()">DASH</button>
+        <button class="touch-btn text-xl" ontouchstart="keys.d=true" ontouchend="keys.d=false">▶</button>
+        <div></div>
+        <button class="touch-btn text-xl" ontouchstart="keys.s=true" ontouchend="keys.s=false">▼</button>
+        <div></div>
+      </div>
+
+      <!-- Combat Buttons -->
+      <div class="flex gap-3">
+        <button class="touch-btn w-16 h-16 text-xs bg-blue-900/80 border-blue-400" ontouchstart="toggleBlock(true)" ontouchend="toggleBlock(false)">BLOCK</button>
+        <button class="touch-btn w-16 h-16 text-xs bg-red-900/80 border-red-400" ontouchstart="triggerAttack('light')">SLASH</button>
+        <button class="touch-btn w-16 h-16 text-xs bg-amber-900/80 border-amber-400" ontouchstart="triggerAttack('heavy')">HEAVY</button>
+      </div>
+    </div>
+
+    <!-- Bottom Controls Legend -->
+    <div class="hidden md:flex bg-zinc-900/90 backdrop-blur border border-white/10 rounded-2xl p-3 justify-between items-center text-xs text-gray-200 pointer-events-auto">
+      <div class="flex gap-4 items-center flex-wrap">
+        <div class="flex items-center gap-1.5"><kbd class="bg-zinc-800 border border-zinc-600 px-2 py-0.5 rounded text-white font-mono font-bold">WASD</kbd> Move</div>
+        <div class="flex items-center gap-1.5"><kbd class="bg-zinc-800 border border-zinc-600 px-2 py-0.5 rounded text-white font-mono font-bold">Mouse</kbd> Orbit Cam (Non-inverted Y)</div>
+        <div class="flex items-center gap-1.5"><kbd class="bg-zinc-800 border border-zinc-600 px-2 py-0.5 rounded text-white font-mono font-bold">LMB</kbd> Sword Slash</div>
+        <div class="flex items-center gap-1.5"><kbd class="bg-zinc-800 border border-zinc-600 px-2 py-0.5 rounded text-white font-mono font-bold">RMB</kbd> Heavy Cleave</div>
+        <div class="flex items-center gap-1.5"><kbd class="bg-zinc-800 border border-zinc-600 px-2 py-0.5 rounded text-white font-mono font-bold">E / Shift</kbd> Block / Timed Parry</div>
+        <div class="flex items-center gap-1.5"><kbd class="bg-zinc-800 border border-zinc-600 px-2 py-0.5 rounded text-white font-mono font-bold">SPACE</kbd> Dodge Roll</div>
+      </div>
+      <div class="text-amber-400 font-semibold flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span> Walk past Z=140 Portcullis into Market Square!
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Text Container -->
+  <div id="floating-text-container" class="absolute inset-0 pointer-events-none"></div>
+
+  <!-- OUTDOOR MERCHANT SHOP MODAL -->
+  <div id="shop-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+    <div class="bg-zinc-900 border-2 border-amber-500/50 rounded-2xl max-w-2xl w-full p-6 text-white shadow-2xl relative">
+      <div class="flex justify-between items-center border-b border-zinc-800 pb-4 mb-6">
+        <div>
+          <h2 class="text-2xl font-black text-amber-400 tracking-wider uppercase flex items-center gap-2">
+            <span>🏛️</span> Coliseum Merchant Stall
+          </h2>
+          <p class="text-xs text-gray-400 mt-1">Enhance your gladiatorial gear in the sunlit market square.</p>
+        </div>
+        <div class="text-right">
+          <span class="text-xs text-gray-400">Purse:</span>
+          <div class="text-xl font-bold text-amber-300"><span id="shop-purse-gold">0</span> 🪙</div>
+        </div>
+      </div>
+
+      <!-- Shop Items Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <!-- Health Potion -->
+        <div class="bg-zinc-800/80 border border-zinc-700 rounded-xl p-4 flex justify-between items-center">
+          <div>
+            <div class="font-bold text-red-400 flex items-center gap-1.5">🧪 Health Potion</div>
+            <div class="text-xs text-gray-400 mt-1">Restores +40 Health</div>
+          </div>
+          <button onclick="buyUpgrade('health_potion')" class="bg-red-600 hover:bg-red-500 text-white font-bold text-xs px-3.5 py-2 rounded-lg border border-red-400 transition">
+            Buy (40 🪙)
+          </button>
+        </div>
+
+        <!-- Gladius Sharpening -->
+        <div class="bg-zinc-800/80 border border-zinc-700 rounded-xl p-4 flex justify-between items-center">
+          <div>
+            <div class="font-bold text-amber-400 flex items-center gap-1.5">⚔️ Sword Sharpness</div>
+            <div class="text-xs text-gray-400 mt-1">+10 Sword Damage (Lvl <span id="lvl-damage">1</span>)</div>
+          </div>
+          <button onclick="buyUpgrade('damage')" class="bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs px-3.5 py-2 rounded-lg border border-yellow-300 transition">
+            Buy (<span id="cost-damage">60</span> 🪙)
+          </button>
+        </div>
+
+        <!-- Gladiator Armor -->
+        <div class="bg-zinc-800/80 border border-zinc-700 rounded-xl p-4 flex justify-between items-center">
+          <div>
+            <div class="font-bold text-blue-400 flex items-center gap-1.5">🛡️ Lorica Segmentata Armor</div>
+            <div class="text-xs text-gray-400 mt-1">+25 Max HP & Protection (Lvl <span id="lvl-armor">1</span>)</div>
+          </div>
+          <button onclick="buyUpgrade('armor')" class="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-2 rounded-lg border border-blue-300 transition">
+            Buy (<span id="cost-armor">75</span> 🪙)
+          </button>
+        </div>
+
+        <!-- Hermes Sandals -->
+        <div class="bg-zinc-800/80 border border-zinc-700 rounded-xl p-4 flex justify-between items-center">
+          <div>
+            <div class="font-bold text-emerald-400 flex items-center gap-1.5">👟 Hermes Sandals</div>
+            <div class="text-xs text-gray-400 mt-1">+15% Movement & Sprint Speed</div>
+          </div>
+          <button onclick="buyUpgrade('speed')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3.5 py-2 rounded-lg border border-emerald-300 transition">
+            Buy (<span id="cost-speed">50</span> 🪙)
+          </button>
+        </div>
+      </div>
+
+      <!-- Footer / Close -->
+      <div class="flex justify-between items-center border-t border-zinc-800 pt-4">
+        <span class="text-xs text-gray-400">Defeat arena champions to earn gold!</span>
+        <button onclick="toggleShopModal(false)" class="bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-black px-6 py-2.5 rounded-xl hover:from-amber-400 hover:to-yellow-300 transition shadow-lg">
+          RETURN TO BATTLE
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- GLOBAL ENGINE STATE ---
+    let scene, camera, renderer, clock;
+    let playerEntity, activeBot = null;
+    let itemDrops = [];
+
+    // Player Upgrades & Stats
+    let playerStats = {
+      hp: 100,
+      maxHp: 100,
+      stamina: 100,
+      maxStamina: 100,
+      gold: 0,
+      wave: 1,
+      highScore: 0,
+      damageBonus: 0,
+      armorLevel: 1,
+      damageLevel: 1,
+      speedLevel: 1,
+      moveSpeedMultiplier: 1.0
+    };
+
+    // Inputs
+    const keys = { w: false, a: false, s: false, d: false, space: false, block: false };
+
+    // Third-Person Orbit Camera Parameters
+    let cameraDistance = 4.8;
+    let cameraPitch = 0.25; // Vertical angle looking down
+    let cameraYaw = 0;      // Orbit angle around player
+    let isTouchDragging = false;
+    let previousTouchX = 0;
+    let previousTouchY = 0;
+
+    // --- PROCEDURAL AUDIO GENERATOR ---
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    let audioCtx = null;
+
+    function initAudio() {
+      if (!audioCtx) audioCtx = new AudioCtx();
+    }
+
+    function playSound(type) {
+      if (!audioCtx) return;
+      try {
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        if (type === 'slash') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(320, now);
+          osc.frequency.exponentialRampToValueAtTime(80, now + 0.14);
+          gain.gain.setValueAtTime(0.3, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.14);
+          osc.start(now); osc.stop(now + 0.14);
+        } else if (type === 'heavy_slash') {
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(200, now);
+          osc.frequency.exponentialRampToValueAtTime(40, now + 0.22);
+          gain.gain.setValueAtTime(0.4, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.22);
+          osc.start(now); osc.stop(now + 0.22);
+        } else if (type === 'hit') {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(240, now);
+          osc.frequency.exponentialRampToValueAtTime(60, now + 0.12);
+          gain.gain.setValueAtTime(0.5, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.12);
+          osc.start(now); osc.stop(now + 0.12);
+        } else if (type === 'block') {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(150, now);
+          osc.frequency.exponentialRampToValueAtTime(80, now + 0.1);
+          gain.gain.setValueAtTime(0.3, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.1);
+          osc.start(now); osc.stop(now + 0.1);
+        } else if (type === 'parry') {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(880, now);
+          osc.frequency.exponentialRampToValueAtTime(350, now + 0.25);
+          gain.gain.setValueAtTime(0.45, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+          osc.start(now); osc.stop(now + 0.25);
+        } else if (type === 'buy') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(523.25, now);
+          osc.frequency.setValueAtTime(659.25, now + 0.08);
+          osc.frequency.setValueAtTime(783.99, now + 0.16);
+          gain.gain.setValueAtTime(0.25, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.28);
+          osc.start(now); osc.stop(now + 0.28);
+        } else if (type === 'pickup') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(440, now);
+          osc.frequency.setValueAtTime(880, now + 0.1);
+          gain.gain.setValueAtTime(0.25, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.18);
+          osc.start(now); osc.stop(now + 0.18);
+        }
+      } catch(e) {}
+    }
+
+    // --- PERSISTENCE ---
+    function loadSavedProgress() {
+      try {
+        const savedScore = localStorage.getItem('combat_game_highscore');
+        const savedGold = localStorage.getItem('combat_game_gold');
+        if (savedScore) playerStats.highScore = parseInt(savedScore, 10) || 0;
+        if (savedGold) playerStats.gold = parseInt(savedGold, 10) || 0;
+
+        document.getElementById('highscore-val').innerText = playerStats.highScore;
+        document.getElementById('gold-val').innerText = playerStats.gold;
+      } catch(e) {}
+    }
+
+    function saveProgress() {
+      if (playerStats.wave > playerStats.highScore) {
+        playerStats.highScore = playerStats.wave;
+        document.getElementById('highscore-val').innerText = playerStats.highScore;
+      }
+      document.getElementById('gold-val').innerText = playerStats.gold;
+      try {
+        window.canvaSDK.saveScore(playerStats.highScore, playerStats.gold);
+      } catch(e) {}
+    }
+
+    // --- SHOP & OUTDOOR MERCHANT LOGIC ---
+    function toggleShopModal(show) {
+      if (show) {
+        document.getElementById('shop-purse-gold').innerText = playerStats.gold;
+        document.getElementById('shop-modal').classList.remove('hidden');
+        if (document.pointerLockElement === document.body) {
+          document.exitPointerLock();
+        }
+      } else {
+        document.getElementById('shop-modal').classList.add('hidden');
+      }
+    }
+
+    function buyUpgrade(type) {
+      initAudio();
+      if (type === 'health_potion') {
+        if (playerStats.gold >= 40) {
+          playerStats.gold -= 40;
+          playerStats.hp = Math.min(playerStats.maxHp, playerStats.hp + 40);
+          playSound('buy');
+          createFloatingText('+40 HP', playerEntity.position.x, playerEntity.position.y + 1.8, playerEntity.position.z, '#ef4444');
+        }
+      } else if (type === 'damage') {
+        const cost = playerStats.damageLevel * 60;
+        if (playerStats.gold >= cost) {
+          playerStats.gold -= cost;
+          playerStats.damageBonus += 10;
+          playerStats.damageLevel++;
+          document.getElementById('lvl-damage').innerText = playerStats.damageLevel;
+          document.getElementById('cost-damage').innerText = playerStats.damageLevel * 60;
+          playSound('buy');
+        }
+      } else if (type === 'armor') {
+        const cost = playerStats.armorLevel * 75;
+        if (playerStats.gold >= cost) {
+          playerStats.gold -= cost;
+          playerStats.maxHp += 25;
+          playerStats.hp += 25;
+          playerStats.armorLevel++;
+          document.getElementById('lvl-armor').innerText = playerStats.armorLevel;
+          document.getElementById('cost-armor').innerText = playerStats.armorLevel * 75;
+          playSound('buy');
+        }
+      } else if (type === 'speed') {
+        const cost = playerStats.speedLevel * 50;
+        if (playerStats.gold >= cost) {
+          playerStats.gold -= cost;
+          playerStats.moveSpeedMultiplier += 0.15;
+          playerStats.speedLevel++;
+          document.getElementById('cost-speed').innerText = playerStats.speedLevel * 50;
+          playSound('buy');
+        }
+      }
+
+      saveProgress();
+      document.getElementById('shop-purse-gold').innerText = playerStats.gold;
+    }
+
+    // --- PROCEDURAL BRIGHT SAND & COLISEUM TEXTURES ---
+    function createBrightSandTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512; canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#eab308'; // Bright warm golden sand
+      ctx.fillRect(0, 0, 512, 512);
+
+      for (let i = 0; i < 30000; i++) {
+        const x = Math.random() * 512;
+        const y = Math.random() * 512;
+        ctx.fillStyle = Math.random() > 0.5 ? '#fef08a' : '#ca8a04';
+        ctx.fillRect(x, y, 2, 2);
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    function createSunlitColiseumStoneTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512; canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#a1a1aa'; // Sunlit limestone tone
+      ctx.fillRect(0, 0, 512, 512);
+
+      ctx.strokeStyle = '#52525b';
+      ctx.lineWidth = 5;
+      const rows = 10;
+      const cols = 5;
+      const rh = 512 / rows;
+      const cw = 512 / cols;
+
+      for (let r = 0; r < rows; r++) {
+        const y = r * rh;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(512, y); ctx.stroke();
+        const offset = (r % 2) * (cw / 2);
+        for (let c = 0; c <= cols + 1; c++) {
+          const x = c * cw - offset;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + rh); ctx.stroke();
+        }
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    // --- ARTICULATED HUMANOID GLADIATOR MODEL WITH SWORD & SHIELD ---
+    function createGladiatorHumanoid(colorHex = 0x991b1b, isPlayer = false) {
+      const group = new THREE.Group();
+
+      const armorMat = new THREE.MeshStandardMaterial({ color: colorHex, metalness: 0.75, roughness: 0.25 });
+      const goldMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.2 });
+      const darkMetalMat = new THREE.MeshStandardMaterial({ color: 0x27272a, metalness: 0.85, roughness: 0.3 });
+      const steelMat = new THREE.MeshStandardMaterial({ color: 0xe4e4e7, metalness: 0.95, roughness: 0.1 });
+      const tunicMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.8 });
+
+      // Root Pelvis
+      const pelvis = new THREE.Group();
+      pelvis.position.y = 0.95;
+      group.add(pelvis);
+
+      const hips = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.2, 0.28), armorMat);
+      pelvis.add(hips);
+
+      // Torso / Cuirass
+      const torsoGroup = new THREE.Group();
+      torsoGroup.position.y = 0.15;
+      pelvis.add(torsoGroup);
+
+      const chest = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.45, 0.32), armorMat);
+      chest.position.y = 0.25;
+      chest.castShadow = true;
+      torsoGroup.add(chest);
+
+      const tunicSkirt = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.32, 0.3, 8), tunicMat);
+      tunicSkirt.position.y = -0.05;
+      torsoGroup.add(tunicSkirt);
+
+      // Helmet
+      const headGroup = new THREE.Group();
+      headGroup.position.y = 0.55;
+      torsoGroup.add(headGroup);
+
+      const helmet = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.3, 0.28), armorMat);
+      helmet.position.y = 0.15;
+      helmet.castShadow = true;
+      headGroup.add(helmet);
+
+      const crest = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.2, 0.38), tunicMat);
+      crest.position.set(0, 0.35, 0);
+      headGroup.add(crest);
+
+      const visor = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.06, 0.3), darkMetalMat);
+      visor.position.set(0, 0.16, 0.02);
+      headGroup.add(visor);
+
+      // Arm Builder
+      function createArm(side) {
+        const armGroup = new THREE.Group();
+        armGroup.position.set(side * 0.32, 0.4, 0);
+
+        const pauldron = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), goldMat);
+        pauldron.scale.set(1.1, 0.8, 1.1);
+        armGroup.add(pauldron);
+
+        const upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.28), armorMat);
+        upperArm.position.y = -0.15;
+        armGroup.add(upperArm);
+
+        const elbowGroup = new THREE.Group();
+        elbowGroup.position.y = -0.28;
+        armGroup.add(elbowGroup);
+
+        const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.28), armorMat);
+        forearm.position.y = -0.14;
+        elbowGroup.add(forearm);
+
+        return { armGroup, elbowGroup };
+      }
+
+      const leftArm = createArm(-1);
+      const rightArm = createArm(1);
+      torsoGroup.add(leftArm.armGroup);
+      torsoGroup.add(rightArm.armGroup);
+
+      // Leg Builder
+      function createLeg(side) {
+        const legGroup = new THREE.Group();
+        legGroup.position.set(side * 0.14, -0.1, 0);
+
+        const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.07, 0.4), armorMat);
+        thigh.position.y = -0.2;
+        legGroup.add(thigh);
+
+        const kneeGroup = new THREE.Group();
+        kneeGroup.position.y = -0.4;
+        legGroup.add(kneeGroup);
+
+        const calf = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.4), armorMat);
+        calf.position.y = -0.2;
+        kneeGroup.add(calf);
+
+        return { legGroup, kneeGroup };
+      }
+
+      const leftLeg = createLeg(-1);
+      const rightLeg = createLeg(1);
+      pelvis.add(leftLeg.legGroup);
+      pelvis.add(rightLeg.legGroup);
+
+      // WEAPONS: RIGHT HAND GLADIUS SWORD
+      const rightHandContainer = new THREE.Group();
+      rightHandContainer.position.set(0, -0.26, 0.05);
+      rightArm.elbowGroup.add(rightHandContainer);
+
+      const swordGroup = new THREE.Group();
+      swordGroup.rotation.x = Math.PI / 2; // Pointing forward from grip
+
+      const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22), darkMetalMat);
+      hilt.position.y = -0.1;
+      swordGroup.add(hilt);
+
+      const guard = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.04, 0.06), goldMat);
+      guard.position.y = 0.01;
+      swordGroup.add(guard);
+
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.75, 0.018), steelMat);
+      blade.position.y = 0.38;
+      swordGroup.add(blade);
+
+      const bladeTip = new THREE.Mesh(new THREE.ConeGeometry(0.042, 0.2, 4), steelMat);
+      bladeTip.rotation.y = Math.PI / 4;
+      bladeTip.position.y = 0.85;
+      swordGroup.add(bladeTip);
+
+      rightHandContainer.add(swordGroup);
+
+      // WEAPONS: LEFT HAND ROMAN SCUTUM SHIELD
+      const leftHandContainer = new THREE.Group();
+      leftHandContainer.position.set(0, -0.26, 0.05);
+      leftArm.elbowGroup.add(leftHandContainer);
+
+      const scutumShield = new THREE.Mesh(
+        new THREE.BoxGeometry(0.48, 0.72, 0.06),
+        new THREE.MeshStandardMaterial({ color: isPlayer ? 0x1d4ed8 : 0x991b1b, roughness: 0.3, metalness: 0.5 })
+      );
+      scutumShield.position.set(0, 0, 0.12);
+
+      const boss = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 12), goldMat);
+      boss.scale.set(1, 1, 0.4);
+      boss.position.z = 0.04;
+      scutumShield.add(boss);
+
+      leftHandContainer.add(scutumShield);
+
+      return {
+        mesh: group,
+        pelvis, torso: torsoGroup, head: headGroup,
+        leftArm: leftArm.armGroup, rightArm: rightArm.armGroup,
+        leftElbow: leftArm.elbowGroup, rightElbow: rightArm.elbowGroup,
+        leftLeg: leftLeg.legGroup, rightLeg: rightLeg.legGroup,
+        swordGroup, scutumShield
+      };
+    }
+
+    // --- SUNLIT COLISEUM ARENA BUILDER ---
+    function buildBrightColiseumArena() {
+      const sandTex = createBrightSandTexture();
+      sandTex.repeat.set(16, 24);
+      const floorMat = new THREE.MeshStandardMaterial({ map: sandTex, roughness: 0.85 });
+
+      const stoneTex = createSunlitColiseumStoneTexture();
+      stoneTex.repeat.set(24, 6);
+      const wallMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.7 });
+      const bannerMat = new THREE.MeshStandardMaterial({ color: 0x991b1b, roughness: 0.6 });
+
+      // 1. ARENA MAIN FLOOR (Z: -120 to +140)
+      const arenaLength = 260;
+      const arenaWidth = 80;
+      const arenaFloorGeo = new THREE.PlaneGeometry(arenaWidth, arenaLength);
+      const arenaFloor = new THREE.Mesh(arenaFloorGeo, floorMat);
+      arenaFloor.rotation.x = -Math.PI / 2;
+      arenaFloor.position.set(0, 0, 10);
+      arenaFloor.receiveShadow = true;
+      scene.add(arenaFloor);
+
+      // Arena Outer Enclosure Walls & Spectator Tiers
+      const leftWall = new THREE.Mesh(new THREE.BoxGeometry(4, 16, arenaLength), wallMat);
+      leftWall.position.set(-arenaWidth / 2 - 2, 8, 10);
+      leftWall.castShadow = true; leftWall.receiveShadow = true;
+      scene.add(leftWall);
+
+      const rightWall = new THREE.Mesh(new THREE.BoxGeometry(4, 16, arenaLength), wallMat);
+      rightWall.position.set(arenaWidth / 2 + 2, 8, 10);
+      rightWall.castShadow = true; rightWall.receiveShadow = true;
+      scene.add(rightWall);
+
+      const backWall = new THREE.Mesh(new THREE.BoxGeometry(arenaWidth + 8, 16, 4), wallMat);
+      backWall.position.set(0, 8, -122);
+      backWall.castShadow = true; backWall.receiveShadow = true;
+      scene.add(backWall);
+
+      // Decorative Crimson Gladiator Banners
+      for (let z = -100; z <= 120; z += 40) {
+        const bannerL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 8, 3), bannerMat);
+        bannerL.position.set(-arenaWidth / 2 + 0.2, 8, z);
+        scene.add(bannerL);
+
+        const bannerR = new THREE.Mesh(new THREE.BoxGeometry(0.2, 8, 3), bannerMat);
+        bannerR.position.set(arenaWidth / 2 - 0.2, 8, z);
+        scene.add(bannerR);
+      }
+
+      // 2. PORTCULLIS GATE THRESHOLD WALL AT Z = 140
+      const gateWallLeft = new THREE.Mesh(new THREE.BoxGeometry((arenaWidth - 16) / 2, 16, 4), wallMat);
+      gateWallLeft.position.set(- (arenaWidth / 4 + 4), 8, 140);
+      scene.add(gateWallLeft);
+
+      const gateWallRight = new THREE.Mesh(new THREE.BoxGeometry((arenaWidth - 16) / 2, 16, 4), wallMat);
+      gateWallRight.position.set((arenaWidth / 4 + 4), 8, 140);
+      scene.add(gateWallRight);
+
+      const pillarLeft = new THREE.Mesh(new THREE.BoxGeometry(3, 16, 6), wallMat);
+      pillarLeft.position.set(-8, 8, 140);
+      scene.add(pillarLeft);
+
+      const pillarRight = new THREE.Mesh(new THREE.BoxGeometry(3, 16, 6), wallMat);
+      pillarRight.position.set(8, 8, 140);
+      scene.add(pillarRight);
+
+      const archTop = new THREE.Mesh(new THREE.BoxGeometry(19, 4, 6), wallMat);
+      archTop.position.set(0, 14, 140);
+      scene.add(archTop);
+
+      // Barrier Line at Portcullis
+      const barrierLine = new THREE.Mesh(
+        new THREE.BoxGeometry(16, 0.1, 0.6),
+        new THREE.MeshBasicMaterial({ color: 0xf59e0b })
+      );
+      barrierLine.position.set(0, 0.05, 140);
+      scene.add(barrierLine);
+
+      // 3. PHYSICAL OUTDOOR MARKET / SHOP ZONE (Z = 140 to Z = 220)
+      const shopFloorGeo = new THREE.PlaneGeometry(80, 80);
+      const shopFloorMat = new THREE.MeshStandardMaterial({ color: 0x52525b, roughness: 0.6 });
+      const shopFloor = new THREE.Mesh(shopFloorGeo, shopFloorMat);
+      shopFloor.rotation.x = -Math.PI / 2;
+      shopFloor.position.set(0, 0, 180);
+      shopFloor.receiveShadow = true;
+      scene.add(shopFloor);
+
+      const shopLeftWall = new THREE.Mesh(new THREE.BoxGeometry(4, 16, 80), wallMat);
+      shopLeftWall.position.set(-42, 8, 180);
+      scene.add(shopLeftWall);
+
+      const shopRightWall = new THREE.Mesh(new THREE.BoxGeometry(4, 16, 80), wallMat);
+      shopRightWall.position.set(42, 8, 180);
+      scene.add(shopRightWall);
+
+      const shopBackWall = new THREE.Mesh(new THREE.BoxGeometry(88, 16, 4), wallMat);
+      shopBackWall.position.set(0, 8, 222);
+      scene.add(shopBackWall);
+
+      // Interactive Merchant Stall Structure (Z = 185)
+      const stallCounter = new THREE.Mesh(new THREE.BoxGeometry(12, 1.4, 3), wallMat);
+      stallCounter.position.set(0, 0.7, 185);
+      stallCounter.castShadow = true;
+      scene.add(stallCounter);
+
+      const canopyMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.4 });
+      const canopy = new THREE.Mesh(new THREE.BoxGeometry(14, 0.4, 6), canopyMat);
+      canopy.position.set(0, 4.5, 185);
+      scene.add(canopy);
+
+      // Merchant NPC
+      const keeper = createGladiatorHumanoid(0xd97706, false);
+      keeper.mesh.position.set(0, 0, 188);
+      keeper.mesh.rotation.y = Math.PI;
+      scene.add(keeper.mesh);
+    }
+
+    // --- ENGINE INIT & SUNLIT ATMOSPHERE ---
+    function initScene() {
+      const container = document.getElementById('canvas-container');
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x38bdf8);
+      scene.fog = new THREE.FogExp2(0x7dd3fc, 0.003);
+
+      camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 200);
+      camera.up.set(0, 1, 0);
+      camera.rotation.order = 'YXZ';
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.15;
+      container.appendChild(renderer.domElement);
+
+      clock = new THREE.Clock();
+
+      // BRIGHT SUNLIGHT & AMBIENT LIGHTING
+      const ambientLight = new THREE.AmbientLight(0xfff7ed, 0.95);
+      scene.add(ambientLight);
+
+      const sunLight = new THREE.DirectionalLight(0xfffbeb, 1.5);
+      sunLight.position.set(40, 60, 30);
+      sunLight.castShadow = true;
+      sunLight.shadow.mapSize.width = 2048;
+      sunLight.shadow.mapSize.height = 2048;
+      sunLight.shadow.camera.near = 0.5;
+      sunLight.shadow.camera.far = 200;
+      sunLight.shadow.camera.left = -60;
+      sunLight.shadow.camera.right = 60;
+      sunLight.shadow.camera.top = 100;
+      sunLight.shadow.camera.bottom = -100;
+      scene.add(sunLight);
+
+      // Build Coliseum Arena & Outdoor Market
+      buildBrightColiseumArena();
+
+      // Create Player Gladiator Character
+      const pModel = createGladiatorHumanoid(0x2563eb, true);
+      pModel.mesh.position.set(0, 0, 40);
+      scene.add(pModel.mesh);
+
+      playerEntity = {
+        model: pModel,
+        position: pModel.mesh.position,
+        rotationY: 0,
+        isAttacking: false,
+        attackType: 'light',
+        attackTimer: 0,
+        isBlockingBtnPressed: false,
+        blockState: 'idle', // 'idle' | 'windup' | 'parry' | 'block'
+        blockStateTimer: 0,
+        isDodging: false,
+        dodgeTimer: 0,
+        dodgeDir: new THREE.Vector3(),
+        walkCycle: 0
+      };
+
+      loadSavedProgress();
+      setupInputHandlers();
+
+      // Spawn First 1v1 Gladiator Duel Opponent
+      spawnDuelBot();
+
+      window.addEventListener('resize', onWindowResize);
+    }
+
+    // --- STRICT 1-VS-1 DUEL BOT SPAWNER ---
+    function spawnDuelBot() {
+      if (activeBot) return;
+
+      const colors = [0x991b1b, 0x065f46, 0x3730a3, 0x854d0e, 0x4c1d95];
+      const botColor = colors[(playerStats.wave - 1) % colors.length];
+      const model = createGladiatorHumanoid(botColor, false);
+
+      model.mesh.position.set(0, 0, -50);
+      scene.add(model.mesh);
+
+      // Floating DOM Health & Stagger Bar
+      const barContainer = document.createElement('div');
+      barContainer.className = 'absolute pointer-events-none hidden flex-col items-center w-28 gap-1';
+      barContainer.innerHTML = `
+        <div class="w-full h-2.5 bg-black/80 rounded border border-gray-500 overflow-hidden shadow-lg">
+          <div class="hp-elem h-full bg-red-600 w-full transition-all"></div>
+        </div>
+        <div class="w-full h-1.5 bg-black/80 rounded overflow-hidden">
+          <div class="stagger-elem h-full bg-blue-400 w-0 transition-all"></div>
+        </div>
+      `;
+      document.body.appendChild(barContainer);
+
+      const baseHp = 80 + (playerStats.wave - 1) * 35;
+
+      activeBot = {
+        model,
+        position: model.mesh.position,
+        rotationY: 0,
+        hp: baseHp,
+        maxHp: baseHp,
+        stagger: 0,
+        maxStagger: 100,
+        isStaggered: false,
+        staggerTimer: 0,
+        isAttacking: false,
+        attackTimer: 0,
+        attackCooldown: 1.5,
+        walkCycle: 0,
+        barContainer,
+        hpBarElem: barContainer.querySelector('.hp-elem'),
+        staggerBarElem: barContainer.querySelector('.stagger-elem')
+      };
+
+      document.getElementById('wave-val').innerText = playerStats.wave;
+
+      const toast = document.getElementById('center-toast');
+      toast.innerText = `DUEL ${playerStats.wave}: CHAMPION ENTERED!`;
+      toast.style.opacity = '1';
+      setTimeout(() => toast.style.opacity = '0', 2200);
+    }
+
+    // --- GOLD DROPS ---
+    function spawnItemDrop(x, z) {
+      const group = new THREE.Group();
+      group.position.set(x, 0.4, z);
+
+      const coinMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.25, 0.25, 0.06, 12),
+        new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.2 })
+      );
+      coinMesh.rotation.x = Math.PI / 2;
+      group.add(coinMesh);
+
+      const pLight = new THREE.PointLight(0xf59e0b, 1.5, 4);
+      group.add(pLight);
+
+      scene.add(group);
+
+      itemDrops.push({
+        group,
+        amount: 35 + playerStats.wave * 15
+      });
+    }
+
+    function createFloatingText(text, x, y, z, color = '#f59e0b') {
+      const vec = new THREE.Vector3(x, y + 1.2, z);
+      vec.project(camera);
+
+      const sx = (vec.x * 0.5 + 0.5) * window.innerWidth;
+      const sy = (-vec.y * 0.5 + 0.5) * window.innerHeight;
+
+      const div = document.createElement('div');
+      div.className = 'floating-text';
+      div.style.left = `${sx}px`;
+      div.style.top = `${sy}px`;
+      div.style.color = color;
+      div.innerText = text;
+
+      document.getElementById('floating-text-container').appendChild(div);
+      setTimeout(() => div.remove(), 1200);
+    }
+
+    // --- COMBAT CONTROLS ---
+    function triggerAttack(type = 'light') {
+      if (playerEntity.isAttacking) return;
+      const cost = type === 'light' ? 15 : 30;
+      if (playerStats.stamina < cost) return;
+
+      playerStats.stamina -= cost;
+      playerEntity.isAttacking = true;
+      playerEntity.attackType = type;
+      playerEntity.attackTimer = type === 'light' ? 0.35 : 0.6;
+
+      playSound(type === 'light' ? 'slash' : 'heavy_slash');
+      checkPlayerHit(type);
+    }
+
+    function toggleBlock(blocking) {
+      playerEntity.isBlockingBtnPressed = blocking;
+      if (blocking) {
+        if (playerEntity.blockState === 'idle') {
+          // Begin Shield Raising Windup
+          playerEntity.blockState = 'windup';
+          playerEntity.blockStateTimer = 0.15; // 0.15s windup frames before active parry
+        }
+      } else {
+        playerEntity.blockState = 'idle';
+        playerEntity.blockStateTimer = 0;
+      }
+    }
+
+    function triggerDodge() {
+      if (playerEntity.isDodging || playerStats.stamina < 20) return;
+      playerStats.stamina -= 20;
+      playerEntity.isDodging = true;
+      playerEntity.dodgeTimer = 0.35;
+
+      const moveDir = new THREE.Vector3();
+      if (keys.w) moveDir.z -= 1;
+      if (keys.s) moveDir.z += 1;
+      if (keys.a) moveDir.x -= 1;
+      if (keys.d) moveDir.x += 1;
+      if (moveDir.lengthSq() === 0) moveDir.z = -1;
+      moveDir.normalize();
+      moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraYaw);
+      playerEntity.dodgeDir.copy(moveDir);
+    }
+
+    // --- INPUT HANDLERS (NATURAL NON-INVERTED Y CAMERA) ---
+    function setupInputHandlers() {
+      window.addEventListener('keydown', (e) => {
+        initAudio();
+        const k = e.key.toLowerCase();
+        if (k === 'w') keys.w = true;
+        if (k === 'a') keys.a = true;
+        if (k === 's') keys.s = true;
+        if (k === 'd') keys.d = true;
+        if (k === 'e' || e.key === 'Shift') toggleBlock(true);
+        if (e.code === 'Space') triggerDodge();
+      });
+
+      window.addEventListener('keyup', (e) => {
+        const k = e.key.toLowerCase();
+        if (k === 'w') keys.w = false;
+        if (k === 'a') keys.a = false;
+        if (k === 's') keys.s = false;
+        if (k === 'd') keys.d = false;
+        if (k === 'e' || e.key === 'Shift') toggleBlock(false);
+      });
+
+      window.addEventListener('mousedown', (e) => {
+        initAudio();
+        if (e.button === 0) triggerAttack('light');
+        if (e.button === 2) triggerAttack('heavy');
+      });
+
+      window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+      // Pointer Lock Orbit Look (NATURAL NON-INVERTED Y CONTROL)
+      window.addEventListener('mousemove', (e) => {
+        if (document.pointerLockElement === document.body) {
+          cameraYaw -= e.movementX * 0.003;
+          // NATURAL CONTROLS: Pushing mouse UP (negative movementY) looks UP (+Pitch)
+          cameraPitch += e.movementY * 0.003;
+          cameraPitch = Math.max(0.05, Math.min(0.95, cameraPitch));
+        }
+      });
+
+      // Touch Drag camera look (NATURAL NON-INVERTED Y CONTROL)
+      window.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1 && e.touches[0].clientX > window.innerWidth / 2) {
+          isTouchDragging = true;
+          previousTouchX = e.touches[0].clientX;
+          previousTouchY = e.touches[0].clientY;
+        }
+      });
+
+      window.addEventListener('touchmove', (e) => {
+        if (isTouchDragging && e.touches.length > 0) {
+          const touch = e.touches[0];
+          const deltaX = touch.clientX - previousTouchX;
+          const deltaY = touch.clientY - previousTouchY;
+
+          cameraYaw -= deltaX * 0.005;
+          // NATURAL TOUCH: Swiping UP (negative deltaY) looks UP (+Pitch)
+          cameraPitch += deltaY * 0.005;
+          cameraPitch = Math.max(0.05, Math.min(0.95, cameraPitch));
+
+          previousTouchX = touch.clientX;
+          previousTouchY = touch.clientY;
+        }
+      });
+
+      window.addEventListener('touchend', () => { isTouchDragging = false; });
+
+      document.getElementById('canvas-container').addEventListener('click', () => {
+        if (document.pointerLockElement !== document.body) {
+          document.body.requestPointerLock();
+        }
+      });
+    }
+
+    // --- COMBAT RESOLUTION ---
+    function checkPlayerHit(attackType) {
+      if (!activeBot || activeBot.hp <= 0) return;
+
+      const dist = playerEntity.position.distanceTo(activeBot.position);
+      if (dist < 2.8) {
+        let damage = (attackType === 'light' ? 24 : 48) + playerStats.damageBonus;
+        let text = `-${Math.round(damage)}`;
+        let color = '#ef4444';
+
+        if (activeBot.isStaggered) {
+          damage *= 2.0;
+          text = `CRITICAL RIPOSTE! -${Math.round(damage)}`;
+          color = '#fef08a';
+          playSound('parry');
+        } else {
+          playSound('hit');
+        }
+
+        activeBot.hp -= damage;
+        activeBot.stagger = Math.min(activeBot.maxStagger, activeBot.stagger + (attackType === 'light' ? 30 : 60));
+        if (activeBot.stagger >= activeBot.maxStagger) {
+          activeBot.isStaggered = true;
+          activeBot.staggerTimer = 2.5;
+        }
+
+        createFloatingText(text, activeBot.position.x, activeBot.position.y + 1.5, activeBot.position.z, color);
+
+        if (activeBot.hp <= 0) {
+          onDuelBotDeath();
+        }
+      }
+    }
+
+    function triggerBotAttack() {
+      if (!activeBot) return;
+      activeBot.isAttacking = true;
+      activeBot.attackTimer = 0.5;
+
+      const dist = activeBot.position.distanceTo(playerEntity.position);
+      if (dist < 2.4) {
+        // Evaluate Player Defense State at exact moment of enemy impact
+        if (playerEntity.blockState === 'parry') {
+          // PERFECT TIMED PARRY!
+          playSound('parry');
+          activeBot.isStaggered = true;
+          activeBot.staggerTimer = 3.0;
+          activeBot.stagger = 100;
+
+          const flash = document.getElementById('parry-flash');
+          flash.style.opacity = '1';
+          setTimeout(() => flash.style.opacity = '0', 200);
+
+          createFloatingText('PERFECT PARRY!', playerEntity.position.x, playerEntity.position.y + 1.8, playerEntity.position.z, '#60a5fa');
+          return;
+        } else if (playerEntity.blockState === 'block') {
+          // REGULAR SHIELD BLOCK
+          playerStats.stamina = Math.max(0, playerStats.stamina - 15);
+          playSound('block');
+          createFloatingText('BLOCKED', playerEntity.position.x, playerEntity.position.y + 1.8, playerEntity.position.z, '#9ca3af');
+          return;
+        }
+
+        // NO DEFENSE / HIT DURING WINDUP
+        if (!playerEntity.isDodging) {
+          const rawDamage = 20 + playerStats.wave * 4;
+          const damage = Math.max(5, rawDamage - (playerStats.armorLevel - 1) * 3);
+          playerStats.hp = Math.max(0, playerStats.hp - damage);
+          playSound('hit');
+          
+          const hitMsg = playerEntity.blockState === 'windup' ? `CAUGHT IN WINDUP! -${Math.round(damage)}` : `-${Math.round(damage)} HP`;
+          createFloatingText(hitMsg, playerEntity.position.x, playerEntity.position.y + 1.8, playerEntity.position.z, '#dc2626');
+
+          if (playerStats.hp <= 0) {
+            alert(`Defeated in Wave ${playerStats.wave}!`);
+            playerStats.hp = playerStats.maxHp;
+            playerStats.wave = 1;
+            saveProgress();
+          }
+        }
+      }
+    }
+
+    function onDuelBotDeath() {
+      scene.remove(activeBot.model.mesh);
+      activeBot.barContainer.remove();
+
+      spawnItemDrop(activeBot.position.x, activeBot.position.z);
+
+      playerStats.gold += 50 + playerStats.wave * 20;
+      playerStats.wave++;
+      saveProgress();
+
+      activeBot = null;
+
+      const toast = document.getElementById('center-toast');
+      toast.innerText = `VICTORY! MARKET SAFE ZONE OPEN!`;
+      toast.style.opacity = '1';
+      setTimeout(() => toast.style.opacity = '0', 2500);
+
+      setTimeout(spawnDuelBot, 5000);
+    }
+
+    // --- ARTICULATED ANIMATION SYSTEM ---
+    function updateModelAnimation(model, walkVal, isAttacking, attackType, attackProgress, blockState, isStaggered) {
+      // Legs movement
+      model.leftLeg.rotation.x = Math.sin(walkVal) * 0.65;
+      model.rightLeg.rotation.x = -Math.sin(walkVal) * 0.65;
+
+      // Stagger pose
+      if (isStaggered) {
+        model.torso.rotation.x = -0.3;
+        model.leftArm.rotation.x = 0.5;
+        model.rightArm.rotation.x = 0.5;
+        return;
+      }
+
+      model.torso.rotation.x = 0;
+
+      // Attack Swings
+      if (isAttacking) {
+        const swing = Math.sin(attackProgress * Math.PI);
+        if (attackType === 'light') {
+          model.rightArm.rotation.x = -Math.PI / 2.5;
+          model.rightArm.rotation.y = -swing * 1.5;
+          model.swordGroup.rotation.z = swing * 1.2;
+        } else { // Heavy Overhead Cleave
+          model.rightArm.rotation.x = -Math.PI * 0.9 + swing * 1.8;
+          model.swordGroup.rotation.z = 0;
+        }
+      } else {
+        model.rightArm.rotation.x = Math.sin(walkVal) * 0.35;
+        model.rightArm.rotation.y = 0;
+        model.swordGroup.rotation.set(Math.PI / 2, 0, 0);
+      }
+
+      // Shield Block & Parry Stances
+      if (blockState === 'windup') {
+        model.leftArm.rotation.x = -Math.PI / 6;
+        model.leftArm.rotation.y = 0.2;
+      } else if (blockState === 'parry') {
+        model.leftArm.rotation.x = -Math.PI / 2.2;
+        model.leftArm.rotation.y = 0.8;
+      } else if (blockState === 'block') {
+        model.leftArm.rotation.x = -Math.PI / 3;
+        model.leftArm.rotation.y = 0.6;
+      } else {
+        model.leftArm.rotation.x = -Math.sin(walkVal) * 0.35;
+        model.leftArm.rotation.y = 0;
+      }
+    }
+
+    // --- MAIN GAME LOOP ---
+    function update(delta) {
+      // TIMED PARRY & BLOCK STATE MACHINE WITH WINDUP
+      if (playerEntity.isBlockingBtnPressed) {
+        if (playerEntity.blockState === 'windup') {
+          playerEntity.blockStateTimer -= delta;
+          if (playerEntity.blockStateTimer <= 0) {
+            // Windup finished -> Enter Active Parry Window
+            playerEntity.blockState = 'parry';
+            playerEntity.blockStateTimer = 0.25; // 0.25s tight parry window
+          }
+        } else if (playerEntity.blockState === 'parry') {
+          playerEntity.blockStateTimer -= delta;
+          if (playerEntity.blockStateTimer <= 0) {
+            // Parry window expired -> Downgrade to regular shield block
+            playerEntity.blockState = 'block';
+          }
+        }
+      } else {
+        playerEntity.blockState = 'idle';
+        playerEntity.blockStateTimer = 0;
+      }
+
+      // Update Parry/Block Status UI Tag
+      const statusTag = document.getElementById('parry-status');
+      if (playerEntity.blockState === 'windup') {
+        statusTag.innerText = "RAISING SHIELD...";
+        statusTag.className = "parry-status-tag bg-zinc-900/80 text-yellow-400 border border-yellow-500/50 opacity-100";
+      } else if (playerEntity.blockState === 'parry') {
+        statusTag.innerText = "⚡ ACTIVE PARRY WINDOW ⚡";
+        statusTag.className = "parry-status-tag bg-blue-900/90 text-blue-300 border border-blue-400 opacity-100 animate-pulse";
+      } else if (playerEntity.blockState === 'block') {
+        statusTag.innerText = "REGULAR BLOCK";
+        statusTag.className = "parry-status-tag bg-zinc-900/80 text-gray-300 border border-gray-500/50 opacity-100";
+      } else {
+        statusTag.style.opacity = '0';
+      }
+
+      // Attack Timers
+      if (playerEntity.attackTimer > 0) {
+        playerEntity.attackTimer -= delta;
+        if (playerEntity.attackTimer <= 0) playerEntity.isAttacking = false;
+      }
+
+      // Stamina Regeneration
+      if (!playerEntity.isAttacking && playerStats.stamina < playerStats.maxStamina) {
+        playerStats.stamina = Math.min(playerStats.maxStamina, playerStats.stamina + delta * 32);
+      }
+
+      // WASD Movement
+      const speed = 6.0 * playerStats.moveSpeedMultiplier;
+      const moveDir = new THREE.Vector3();
+      if (keys.w) moveDir.z -= 1;
+      if (keys.s) moveDir.z += 1;
+      if (keys.a) moveDir.x -= 1;
+      if (keys.d) moveDir.x += 1;
+
+      if (moveDir.lengthSq() > 0) {
+        moveDir.normalize();
+        moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraYaw);
+
+        if (playerEntity.isDodging) {
+          playerEntity.position.addScaledVector(playerEntity.dodgeDir, delta * 18);
+        } else {
+          playerEntity.position.addScaledVector(moveDir, delta * speed);
+          const targetAngle = Math.atan2(moveDir.x, moveDir.z);
+          playerEntity.rotationY = targetAngle;
+          playerEntity.walkCycle += delta * 10;
+        }
+      }
+
+      if (playerEntity.isDodging) {
+        playerEntity.dodgeTimer -= delta;
+        if (playerEntity.dodgeTimer <= 0) playerEntity.isDodging = false;
+      }
+
+      // PLAYER BOUNDS (Arena Z: -118 to 140 | Market Z: 140 to 218)
+      playerEntity.position.x = Math.max(-38, Math.min(38, playerEntity.position.x));
+      playerEntity.position.z = Math.max(-118, Math.min(218, playerEntity.position.z));
+      playerEntity.position.y = 0;
+
+      playerEntity.model.mesh.position.set(playerEntity.position.x, 0, playerEntity.position.z);
+      playerEntity.model.mesh.rotation.y = playerEntity.rotationY;
+
+      // Animate Player
+      const attackProg = 1 - (playerEntity.attackTimer / (playerEntity.attackType === 'light' ? 0.35 : 0.6));
+      updateModelAnimation(
+        playerEntity.model,
+        playerEntity.walkCycle,
+        playerEntity.isAttacking,
+        playerEntity.attackType,
+        attackProg,
+        playerEntity.blockState,
+        false
+      );
+
+      // THIRD PERSON SMOOTH ORBIT CAMERA FOLLOW
+      const targetCamPos = new THREE.Vector3(
+        playerEntity.position.x + Math.sin(cameraYaw) * cameraDistance * Math.cos(cameraPitch),
+        playerEntity.position.y + 1.8 + Math.sin(cameraPitch) * cameraDistance,
+        playerEntity.position.z + Math.cos(cameraYaw) * cameraDistance * Math.cos(cameraPitch)
+      );
+
+      camera.position.lerp(targetCamPos, 0.2);
+      camera.lookAt(playerEntity.position.x, playerEntity.position.y + 1.4, playerEntity.position.z);
+
+      // ZONE INDICATOR HUD UPDATE
+      const zoneTag = document.getElementById('zone-tag');
+      if (playerEntity.position.z > 140) {
+        zoneTag.innerText = "🏛️ MARKET SQUARE SAFE ZONE";
+        zoneTag.style.borderColor = "#34d399";
+        zoneTag.style.color = "#34d399";
+
+        if (playerEntity.position.z >= 180 && document.getElementById('shop-modal').classList.contains('hidden')) {
+          toggleShopModal(true);
+        }
+      } else {
+        zoneTag.innerText = "⚔️ SUNLIT COLISEUM ARENA";
+        zoneTag.style.borderColor = "rgba(251,191,36,0.5)";
+        zoneTag.style.color = "#fef08a";
+      }
+
+      // STRICT 1v1 DUEL BOT AI & PHYSICAL SHOP BARRIER (Z <= 130)
+      if (activeBot) {
+        activeBot.position.y = 0;
+
+        if (activeBot.isStaggered) {
+          activeBot.staggerTimer -= delta;
+          if (activeBot.staggerTimer <= 0) {
+            activeBot.isStaggered = false;
+            activeBot.stagger = 0;
+          }
+        }
+
+        const toPlayer = new THREE.Vector3().subVectors(playerEntity.position, activeBot.position);
+        toPlayer.y = 0;
+        const distToPlayer = toPlayer.length();
+
+        if (!activeBot.isStaggered) {
+          activeBot.rotationY = Math.atan2(toPlayer.x, toPlayer.z);
+
+          if (distToPlayer > 1.8) {
+            toPlayer.normalize();
+            activeBot.position.addScaledVector(toPlayer, delta * 3.8);
+            activeBot.walkCycle += delta * 8;
+          } else {
+            activeBot.attackCooldown -= delta;
+            if (activeBot.attackCooldown <= 0) {
+              triggerBotAttack();
+              activeBot.attackCooldown = Math.random() * 1.2 + 0.9;
+            }
+          }
+        }
+
+        // HARD PHYSICAL BARRIER BLOCKING ENEMY FROM SHOP (Z <= 130)
+        activeBot.position.z = Math.min(130, activeBot.position.z);
+        activeBot.position.z = Math.max(-118, activeBot.position.z);
+        activeBot.position.x = Math.max(-36, Math.min(36, activeBot.position.x));
+
+        activeBot.model.mesh.position.set(activeBot.position.x, 0, activeBot.position.z);
+        activeBot.model.mesh.rotation.y = activeBot.rotationY;
+
+        updateModelAnimation(
+          activeBot.model,
+          activeBot.walkCycle,
+          activeBot.isAttacking,
+          'light',
+          activeBot.attackTimer / 0.5,
+          'idle',
+          activeBot.isStaggered
+        );
+
+        // Overhead Floating UI
+        const vec = activeBot.position.clone().add(new THREE.Vector3(0, 2.2, 0));
+        vec.project(camera);
+        if (vec.z < 1) {
+          const sx = (vec.x * 0.5 + 0.5) * window.innerWidth;
+          const sy = (-vec.y * 0.5 + 0.5) * window.innerHeight;
+          activeBot.barContainer.style.left = `${sx - 56}px`;
+          activeBot.barContainer.style.top = `${sy}px`;
+          activeBot.barContainer.style.display = 'flex';
+          activeBot.hpBarElem.style.width = `${(activeBot.hp / activeBot.maxHp) * 100}%`;
+          activeBot.staggerBarElem.style.width = `${(activeBot.stagger / activeBot.maxStagger) * 100}%`;
+        } else {
+          activeBot.barContainer.style.display = 'none';
+        }
+      }
+
+      // ITEM DROP PICKUPS
+      for (let i = itemDrops.length - 1; i >= 0; i--) {
+        const drop = itemDrops[i];
+        drop.group.rotation.y += delta * 3;
+
+        if (playerEntity.position.distanceTo(drop.group.position) < 1.8) {
+          playSound('pickup');
+          playerStats.gold += drop.amount;
+          saveProgress();
+
+          createFloatingText(`+${drop.amount} Gold 🪙`, drop.group.position.x, drop.group.position.y + 0.5, drop.group.position.z, '#f59e0b');
+
+          scene.remove(drop.group);
+          itemDrops.splice(i, 1);
+        }
+      }
+
+      // UI HUD Update
+      document.getElementById('hp-bar').style.width = `${(playerStats.hp / playerStats.maxHp) * 100}%`;
+      document.getElementById('hp-text').innerText = `${Math.round(playerStats.hp)} / ${playerStats.maxHp}`;
+      document.getElementById('stamina-bar').style.width = `${(playerStats.stamina / playerStats.maxStamina) * 100}%`;
+      document.getElementById('stamina-text').innerText = `${Math.round(playerStats.stamina)} / ${playerStats.maxStamina}`;
+      document.getElementById('gold-val').innerText = playerStats.gold;
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      update(delta);
+      renderer.render(scene, camera);
+    }
+
+    window.onload = () => {
+      initScene();
+      animate();
+    };
+  </script>
+</body>
+</html>
